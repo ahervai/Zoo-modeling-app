@@ -270,7 +270,7 @@ export const DEFAULT_LENGTH_UNIT_CONVERSION_DECIMAL_PLACES = 7
  * When no annotation is in the KCL file to specify the defaults
  */
 export const DEFAULT_EXPERIMENTAL_FEATURES: WarningLevel = {
-  type: 'Deny',
+  type: 'Allow',
 }
 
 /** Real execution. */
