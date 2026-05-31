@@ -3979,6 +3979,198 @@ export function getHideOperations(ops: Operation[]): Operation[] {
   return ops.filter((op) => op.type === 'StdLibCall' && op.name === 'hide')
 }
 
+/**
+ * A node in the hierarchical feature tree structure.
+ */
+export type FeatureTreeNode = {
+  label: string
+  /** The operation type (e.g. 'StdLibCall', 'VariableDeclaration', 'SketchBlock'). */
+  type: string
+  /** For StdLibCall operations, the stdlib function name (e.g. 'extrude', 'revolve'). */
+  operationName?: string
+  /** The variable name this operation's result is assigned to, if any. */
+  variableName?: string
+  /** The KCL runtime value type for VariableDeclaration nodes (e.g. 'Number', 'Solid'). */
+  kclType?: string
+  /** The calculated display value for VariableDeclaration nodes. */
+  value?: string
+  children: FeatureTreeNode[]
+}
+
+/** Optional context for richer field extraction in buildFeatureTree. */
+export type FeatureTreeContext = {
+  program: Program
+  wasmInstance: ModuleType
+}
+
+/**
+ * Extracts the variable name, kclType, and value fields from a single Operation.
+ */
+function extractOpFields(
+  op: Operation,
+  context?: FeatureTreeContext
+): Pick<FeatureTreeNode, 'variableName' | 'kclType' | 'value'> {
+  if (op.type === 'VariableDeclaration') {
+    return {
+      variableName: op.name,
+      kclType: op.value.type,
+      value: getOperationCalculatedDisplay(op.value),
+    }
+  }
+
+  if (!context) return {}
+
+  try {
+    const variableName = getOperationVariableName(
+      op,
+      context.program,
+      context.wasmInstance
+    )
+    return { variableName: variableName ?? undefined }
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * OpKclValue types that represent meaningful scalar/dimensional values.
+ * Geometry/selection types (Solid, Sketch, Array, etc.) are intentionally excluded.
+ */
+const SCALAR_KCL_TYPES = new Set(['Number', 'Bool', 'String', 'SketchVar'])
+
+/**
+ * Extracts the labeled scalar arguments of a StdLibCall operation as
+ * dimension child FeatureTreeNodes.
+ *
+ * Geometry and selection argument types are skipped — only numeric, boolean,
+ * and string values are promoted to DIMENSION children so that spreadsheet
+ * consumers see the actual parameter values (e.g. length = 200) nested under
+ * the feature that owns them.
+ */
+function extractLabeledArgDimensions(op: Operation): FeatureTreeNode[] {
+  if (op.type !== 'StdLibCall' || !op.labeledArgs) return []
+  const children: FeatureTreeNode[] = []
+  for (const [argName, opArg] of Object.entries(op.labeledArgs)) {
+    if (!SCALAR_KCL_TYPES.has(opArg.value.type)) continue
+    children.push({
+      label: argName,
+      type: 'Dimension',
+      kclType: opArg.value.type,
+      value: getOperationCalculatedDisplay(opArg.value),
+      children: [],
+    })
+  }
+  return children
+}
+
+/**
+ * Builds a hierarchical feature tree from a raw operations list.
+ * Applies the same filtering and grouping used in the feature tree UI, then
+ * maps grouped sketch blocks and parameter streaks into parent nodes with children.
+ *
+ * Pass `context` (program + wasmInstance from kclManager) to also populate
+ * `variableName` on StdLibCall and SketchSolve nodes.
+ */
+export function buildFeatureTree(
+  operations: Operation[],
+  context?: FeatureTreeContext
+): FeatureTreeNode[] {
+  const processedList = groupSketchBlockOperations(
+    groupOperationTypeStreaks(filterOperations(operations), [
+      'VariableDeclaration',
+    ])
+  )
+  return processedList.map((opOrGroup): FeatureTreeNode => {
+    if (isArray(opOrGroup)) {
+      const isSketchBlock = isSketchBlockOperationGroup(opOrGroup)
+      const first = opOrGroup[0]
+      const label = isSketchBlock ? 'Sketch' : getOpTypeLabel(first.type)
+      const type = isSketchBlock ? 'SketchBlock' : `${first.type}Group`
+      return {
+        label,
+        type,
+        children: opOrGroup.map(
+          (op): FeatureTreeNode => ({
+            label: getOperationLabel(op),
+            type: op.type,
+            operationName: op.type === 'StdLibCall' ? op.name : undefined,
+            ...extractOpFields(op, context),
+            children: [],
+          })
+        ),
+      }
+    }
+    return {
+      label: getOperationLabel(opOrGroup),
+      type: opOrGroup.type,
+      operationName:
+        opOrGroup.type === 'StdLibCall' ? opOrGroup.name : undefined,
+      ...extractOpFields(opOrGroup, context),
+      children: extractLabeledArgDimensions(opOrGroup),
+    }
+  })
+}
+
+/** Escapes a value for a CSV cell: wraps in quotes if it contains a comma, quote, or newline. */
+function csvCell(value: string | undefined): string {
+  if (value === undefined || value === '') return ''
+  if (/[",\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`
+  }
+  return value
+}
+
+/**
+ * Recursively serialises feature tree nodes into flat CSV rows.
+ *
+ * Columns: Feature name, Value, Unit, API type
+ *
+ * Hierarchy is encoded with an open/close pattern (matching the SolidWorks
+ * property-manager CSV convention):
+ *   - Nodes that have children emit an opening row, then their children, then
+ *     a closing row — both rows share the same feature name and API type.
+ *     This makes the parent/child relationship unambiguous in a spreadsheet.
+ *   - Leaf nodes with a calculated value are emitted as a single DIMENSION row.
+ *   - Leaf nodes without a value are emitted as a single FEATURE row.
+ *
+ * Example output:
+ *   Sketch,,,FEATURE          ← opens sketch group
+ *   startSketchOn,,,FEATURE   ← child of sketch
+ *   Sketch,,,FEATURE          ← closes sketch group
+ *   extrude001,,,FEATURE      ← standalone operation
+ *   length,200,,DIMENSION     ← variable with a value
+ */
+function featureTreeToCsvRows(nodes: FeatureTreeNode[]): string[] {
+  const rows: string[] = []
+  for (const node of nodes) {
+    const name = csvCell(node.variableName ?? node.label)
+    const value = csvCell(node.value)
+
+    if (node.children.length > 0) {
+      rows.push([name, '', '', 'FEATURE'].join(','))
+      rows.push(...featureTreeToCsvRows(node.children))
+      rows.push([name, '', '', 'FEATURE'].join(','))
+    } else if (node.value !== undefined) {
+      rows.push([name, value, '', 'DIMENSION'].join(','))
+    } else {
+      rows.push([name, '', '', 'FEATURE'].join(','))
+    }
+  }
+  return rows
+}
+
+/**
+ * Returns a complete CSV string (header + rows) for the given feature tree.
+ *
+ * Format: Feature name, Value, Unit, API type
+ * Hierarchy is encoded via open/close feature rows (see featureTreeToCsvRows).
+ */
+export function buildFeatureTreeCsv(nodes: FeatureTreeNode[]): string {
+  const header = 'Feature name,Value,Unit,API type'
+  const rows = featureTreeToCsvRows(nodes)
+  return [header, ...rows, ''].join('\n')
+}
+
 export interface EnterEditFlowProps {
   operation: Operation
   code: string
