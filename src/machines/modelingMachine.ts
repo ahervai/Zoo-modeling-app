@@ -114,6 +114,7 @@ import {
   deleteSelectionPromise,
   deletionErrorMessage,
 } from '@src/lang/modifyAst/deleteSelection'
+import { addDimDistance } from '@src/lang/modifyAst/dim'
 import { addBlend, addChamfer, addFillet } from '@src/lang/modifyAst/edges'
 import {
   addDeleteFace,
@@ -217,7 +218,10 @@ import {
 } from '@src/lib/constants'
 import { exportMake } from '@src/lib/exportMake'
 import { exportSave } from '@src/lib/exportSave'
-import { withDefaultGdtFrameDefaults } from '@src/lib/gdtFramePosition'
+import {
+  getEngineEntityIdsForGdtSelections,
+  withDefaultGdtFrameDefaults,
+} from '@src/lib/gdtFramePosition'
 import { toPlaneName } from '@src/lib/planes'
 import type { Project } from '@src/lib/project'
 import type RustContext from '@src/lib/rustContext'
@@ -642,6 +646,7 @@ export type ModelingMachineEvent =
       data: ModelingCommandSchema['GDT Parallelism']
     }
   | { type: 'GDT Annotation'; data: ModelingCommandSchema['GDT Annotation'] }
+  | { type: 'Dim Distance'; data: ModelingCommandSchema['Dim Distance'] }
   | { type: 'Flip Surface'; data: ModelingCommandSchema['Flip Surface'] }
   | { type: 'Join Surfaces'; data: ModelingCommandSchema['Join Surfaces'] }
   | {
@@ -6082,6 +6087,84 @@ export const modelingMachine = setup({
         )
       }
     ),
+    dimDistanceAstMod: fromPromise(
+      async ({
+        input,
+      }: {
+        input:
+          | {
+              data: ModelingCommandSchema['Dim Distance'] | undefined
+              kclManager: KclManager
+              engineCommandManager: ConnectionManager
+            }
+          | undefined
+      }) => {
+        if (!input || !input.data) {
+          return Promise.reject(new Error(NO_INPUT_PROVIDED_MESSAGE))
+        }
+        const { data, kclManager, engineCommandManager } = input
+        const wasmInstance = await kclManager.wasmInstancePromise
+
+        // Query bounding boxes to derive leftmost/rightmost X of each body
+        // leftComponent (first selection) → right plane at its max X
+        // rightComponent (second selection) → left plane at its min X
+        const leftEntityIds = getEngineEntityIdsForGdtSelections(
+          data.rightComponent
+        )
+        const rightEntityIds = getEngineEntityIdsForGdtSelections(
+          data.leftComponent
+        )
+
+        async function getBoundingBoxX(
+          entityIds: string[]
+        ): Promise<{ min: number; max: number } | undefined> {
+          if (entityIds.length === 0) return undefined
+          try {
+            const { v4: uuidv4 } = await import('uuid')
+            const response = await engineCommandManager.sendSceneCommand({
+              type: 'modeling_cmd_req',
+              cmd_id: uuidv4(),
+              cmd: { type: 'bounding_box', entity_ids: entityIds },
+            })
+            const modelingResp = (response as any)?.resp?.data
+              ?.modeling_response
+            if (modelingResp?.type !== 'bounding_box') return undefined
+            const { center, dimensions } = modelingResp.data
+            return {
+              min: center.x - dimensions.x / 2,
+              max: center.x + dimensions.x / 2,
+            }
+          } catch {
+            return undefined
+          }
+        }
+
+        const leftBB = await getBoundingBoxX(leftEntityIds)
+        const rightBB = await getBoundingBoxX(rightEntityIds)
+
+        const leftOffsetMm = leftBB?.max
+        const rightOffsetMm = rightBB?.min
+
+        const result = addDimDistance({
+          ...data,
+          leftOffsetMm,
+          rightOffsetMm,
+          ast: kclManager.ast,
+          wasmInstance,
+        })
+        if (err(result)) {
+          return Promise.reject(result)
+        }
+        await updateModelingState(
+          result.modifiedAst,
+          EXECUTION_TYPE_REAL,
+          kclManager,
+          {
+            focusPath: [result.pathToNode],
+          }
+        )
+      }
+    ),
     flipSurfaceAstMod: fromPromise(
       async ({
         input,
@@ -6864,6 +6947,10 @@ export const modelingMachine = setup({
 
         'GDT Annotation': {
           target: 'Applying GDT Annotation',
+        },
+
+        'Dim Distance': {
+          target: 'Applying Dim Distance',
         },
 
         'Boolean Subtract': {
@@ -9221,6 +9308,26 @@ export const modelingMachine = setup({
             data: event.data,
             kclManager: context.kclManager,
             rustContext: context.rustContext,
+          }
+        },
+        onDone: ['idle'],
+        onError: {
+          target: 'idle',
+          actions: 'toastError',
+        },
+      },
+    },
+
+    'Applying Dim Distance': {
+      invoke: {
+        src: 'dimDistanceAstMod',
+        id: 'dimDistanceAstMod',
+        input: ({ event, context }) => {
+          if (event.type !== 'Dim Distance') return undefined
+          return {
+            data: event.data,
+            kclManager: context.kclManager,
+            engineCommandManager: context.engineCommandManager,
           }
         },
         onDone: ['idle'],

@@ -117,6 +117,12 @@ app.setPath('sessionData', appProfilePath)
 
 /// Register our application to handle all "zoo-studio:" protocols.
 const singleInstanceLock = app.requestSingleInstanceLock()
+console.log(
+  'singleInstanceLock:',
+  singleInstanceLock,
+  'userData:',
+  app.getPath('userData')
+)
 if (process.defaultApp) {
   if (process.argv.length >= 2) {
     app.setAsDefaultProtocolClient(ZOO_STUDIO_PROTOCOL, process.execPath, [
@@ -257,7 +263,18 @@ const createWindow = (pathToOpen?: string): BrowserWindow => {
       ? decodeURI(pathToOpen.replace(ZOO_STUDIO_PROTOCOL + '://', ''))
       : ''
     const fullHashBasedUrl = `${MAIN_WINDOW_VITE_DEV_SERVER_URL}/#/${filteredPath}`
-    newWindow.loadURL(fullHashBasedUrl).catch(reportRejection)
+    const loadWithRetry = async (retriesLeft = 10): Promise<void> => {
+      try {
+        await newWindow.loadURL(fullHashBasedUrl)
+      } catch (e) {
+        if (retriesLeft > 0 && !newWindow.isDestroyed()) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 500))
+          return loadWithRetry(retriesLeft - 1)
+        }
+        reportRejection(e)
+      }
+    }
+    void loadWithRetry()
   } else {
     if (pathIsCustomProtocolLink && pathToOpen) {
       // We're trying to open a custom protocol link

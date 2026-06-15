@@ -4064,6 +4064,74 @@ function extractLabeledArgDimensions(op: Operation): FeatureTreeNode[] {
 }
 
 /**
+ * Returns true if the given operation group represents a SketchBlock group,
+ * i.e. it starts with a GroupBegin whose group.type is 'SketchBlock'.
+ */
+function isSketchBlockOperationGroup(group: Operation[]): boolean {
+  return (
+    group.length > 0 &&
+    group[0].type === 'GroupBegin' &&
+    (group[0] as Extract<Operation, { type: 'GroupBegin' }>).group.type ===
+      'SketchBlock'
+  )
+}
+
+/**
+ * Groups contiguous operations that fall between a GroupBegin(SketchBlock) and
+ * its matching GroupEnd into sub-arrays within the NestedOpList, so that
+ * buildFeatureTree can render sketch blocks as parent nodes with children.
+ */
+function groupSketchBlockOperations(opList: NestedOpList): NestedOpList {
+  const result: NestedOpList = []
+  let current: Operation[] | null = null
+  let depth = 0
+
+  for (const item of opList) {
+    if (isArray(item)) {
+      if (current !== null) {
+        current.push(...item)
+      } else {
+        result.push(item)
+      }
+      continue
+    }
+
+    if (
+      item.type === 'GroupBegin' &&
+      (item as Extract<Operation, { type: 'GroupBegin' }>).group.type ===
+        'SketchBlock' &&
+      depth === 0
+    ) {
+      current = [item]
+      depth = 1
+    } else if (current !== null) {
+      if (item.type === 'GroupBegin') {
+        depth++
+        current.push(item)
+      } else if (item.type === 'GroupEnd') {
+        depth--
+        current.push(item)
+        if (depth === 0) {
+          result.push(current)
+          current = null
+        }
+      } else {
+        current.push(item)
+      }
+    } else {
+      result.push(item)
+    }
+  }
+
+  // Flush any unclosed sketch block group as individual items
+  if (current !== null) {
+    for (const op of current) result.push(op)
+  }
+
+  return result
+}
+
+/**
  * Builds a hierarchical feature tree from a raw operations list.
  * Applies the same filtering and grouping used in the feature tree UI, then
  * maps grouped sketch blocks and parameter streaks into parent nodes with children.
@@ -4080,35 +4148,37 @@ export function buildFeatureTree(
       'VariableDeclaration',
     ])
   )
-  return processedList.map((opOrGroup): FeatureTreeNode => {
-    if (isArray(opOrGroup)) {
-      const isSketchBlock = isSketchBlockOperationGroup(opOrGroup)
-      const first = opOrGroup[0]
-      const label = isSketchBlock ? 'Sketch' : getOpTypeLabel(first.type)
-      const type = isSketchBlock ? 'SketchBlock' : `${first.type}Group`
+  return processedList.map(
+    (opOrGroup: Operation | Operation[]): FeatureTreeNode => {
+      if (isArray(opOrGroup)) {
+        const isSketchBlock = isSketchBlockOperationGroup(opOrGroup)
+        const first = opOrGroup[0]
+        const label = isSketchBlock ? 'Sketch' : getOpTypeLabel(first.type)
+        const type = isSketchBlock ? 'SketchBlock' : `${first.type}Group`
+        return {
+          label,
+          type,
+          children: opOrGroup.map(
+            (op): FeatureTreeNode => ({
+              label: getOperationLabel(op),
+              type: op.type,
+              operationName: op.type === 'StdLibCall' ? op.name : undefined,
+              ...extractOpFields(op, context),
+              children: [],
+            })
+          ),
+        }
+      }
       return {
-        label,
-        type,
-        children: opOrGroup.map(
-          (op): FeatureTreeNode => ({
-            label: getOperationLabel(op),
-            type: op.type,
-            operationName: op.type === 'StdLibCall' ? op.name : undefined,
-            ...extractOpFields(op, context),
-            children: [],
-          })
-        ),
+        label: getOperationLabel(opOrGroup),
+        type: opOrGroup.type,
+        operationName:
+          opOrGroup.type === 'StdLibCall' ? opOrGroup.name : undefined,
+        ...extractOpFields(opOrGroup, context),
+        children: extractLabeledArgDimensions(opOrGroup),
       }
     }
-    return {
-      label: getOperationLabel(opOrGroup),
-      type: opOrGroup.type,
-      operationName:
-        opOrGroup.type === 'StdLibCall' ? opOrGroup.name : undefined,
-      ...extractOpFields(opOrGroup, context),
-      children: extractLabeledArgDimensions(opOrGroup),
-    }
-  })
+  )
 }
 
 /** Escapes a value for a CSV cell: wraps in quotes if it contains a comma, quote, or newline. */

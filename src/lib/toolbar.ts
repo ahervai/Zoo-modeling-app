@@ -1,9 +1,13 @@
 import { useMemo } from 'react'
 import type { EventFrom, StateFrom } from 'xstate'
 
+import { showCadifyDimensionModal } from '@src/components/CadifyDimensionModal'
 import type { CustomIconName } from '@src/components/CustomIcon'
+import { showFeatureTreeModal } from '@src/components/FeatureTreeModal'
 import { createLiteral } from '@src/lang/create'
+import type { Program } from '@src/lang/wasm'
 import { useApp } from '@src/lib/boot'
+import { browserSaveFile } from '@src/lib/browserSaveFile'
 import {
   EXPERIMENTAL_POINT_AND_CLICK_FLAG,
   SKETCH_DEFAULT_PLANE_XY,
@@ -13,6 +17,7 @@ import {
 } from '@src/lib/constants'
 import type { HotkeySequence } from '@src/lib/hotkeys'
 import { isDesktop } from '@src/lib/isDesktop'
+import { buildFeatureTree, buildFeatureTreeCsv } from '@src/lib/operations'
 import { getSelectedDefaultPlane, selectSketchPlane } from '@src/lib/selections'
 import type { ModuleType } from '@src/lib/wasm_lib_wrapper'
 import { withSiteBaseURL } from '@src/lib/withBaseURL'
@@ -85,6 +90,7 @@ export type ToolbarDropdown = {
   display?: 'default' | 'recent'
   visibleItemCount?: number
   defaultVisibleItemIds?: string[]
+  groupIcon?: CustomIconName
 }
 
 export interface ToolbarItemCallbackProps {
@@ -198,6 +204,7 @@ export type ToolbarItemResolvedDropdown = {
   display?: 'default' | 'recent'
   visibleItemCount?: number
   defaultVisibleItemIds?: string[]
+  groupIcon?: CustomIconName
 }
 
 export const isToolbarItemResolvedDropdown = (
@@ -1676,6 +1683,90 @@ export function buildToolbarConfig(
                   ),
                 },
               ],
+            },
+          ],
+        },
+        'break',
+        {
+          id: 'cadify-tools',
+          groupIcon: 'settings' as const,
+          array: [
+            {
+              id: 'cadify-dimension-x',
+              onClick: () =>
+                commands.send({
+                  type: 'Find and select command',
+                  data: { name: 'Dim Distance', groupId: 'modeling' },
+                }),
+              status: 'experimental',
+              title: 'X-length Edge Planes',
+              icon: 'plane' as const,
+              description:
+                'Select two bodies to create YZ offset planes at their X extents.',
+              links: [],
+            },
+            {
+              id: 'cadify-dimension-x-wizard',
+              onClick: ({ modelingState }) => {
+                const { kclManager } = modelingState.context
+                showCadifyDimensionModal({ kclManager }).catch(console.error)
+              },
+              status: 'experimental',
+              title: 'Create X-Length Dimension (Wizard)',
+              icon: 'dimension' as const,
+              description:
+                'Open the step-by-step wizard to create a dynamic X-direction dimension using offset plane inputs.',
+              links: [],
+            },
+            {
+              id: 'cadify-export-features',
+              onClick: ({ modelingState }) => {
+                const { kclManager } = modelingState.context
+                let context:
+                  | { program: Program; wasmInstance: ModuleType }
+                  | undefined
+                try {
+                  context = {
+                    program: kclManager.ast,
+                    wasmInstance: kclManager.wasmInstance,
+                  }
+                } catch {
+                  // wasmInstance not yet initialized
+                }
+                const tree = buildFeatureTree(kclManager.operations, context)
+                const csv = buildFeatureTreeCsv(tree)
+                const blob = new Blob([csv], { type: 'text/csv' })
+                browserSaveFile(blob, 'Cadify.csv', 'cadify-export').catch(
+                  console.error
+                )
+              },
+              status: 'experimental',
+              title: 'Export Features',
+              description: 'Exports features for Zoo Cadify.',
+              links: [],
+            },
+            {
+              id: 'cadify-show-features',
+              onClick: ({ modelingState }) => {
+                const { kclManager } = modelingState.context
+                let context:
+                  | { program: Program; wasmInstance: ModuleType }
+                  | undefined
+                try {
+                  context = {
+                    program: kclManager.ast,
+                    wasmInstance: kclManager.wasmInstance,
+                  }
+                } catch {
+                  // wasmInstance not yet initialized
+                }
+                const tree = buildFeatureTree(kclManager.operations, context)
+                showFeatureTreeModal({ tree }).catch(console.error)
+              },
+              status: 'experimental',
+              title: 'Show Features',
+              description: 'Shows the feature tree for inspection.',
+              links: [],
             },
           ],
         },

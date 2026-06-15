@@ -57,6 +57,7 @@ import {
   addSubtract,
   addUnion,
 } from '@src/lang/modifyAst/boolean'
+import { addDimDistance } from '@src/lang/modifyAst/dim'
 import { addBlend, addChamfer, addFillet } from '@src/lang/modifyAst/edges'
 import type { HoleBody, HoleBottom, HoleType } from '@src/lang/modifyAst/faces'
 import {
@@ -658,6 +659,11 @@ export type ModelingCommandSchema = {
     framePlane?: string
     leaderScale?: KclCommandValue
     fontSize?: KclCommandValue
+  }
+  'Dim Distance': {
+    name: string
+    leftComponent: Selections
+    rightComponent: Selections
   }
   'Boolean Subtract': {
     solids: Selections
@@ -4175,6 +4181,56 @@ export const modelingMachineCommandConfig: StateMachineCommandSetConfig<
         multiple: true,
         required: true,
         description: 'Only straight edges are supported now.',
+      },
+    },
+  },
+  'Dim Distance': {
+    description:
+      'Create two YZ station planes (one per selected body) for X-direction dimensioning.',
+    icon: 'dimension',
+    needsReview: true,
+    reviewValidation: async (context, modelingActor) => {
+      if (!modelingActor) {
+        return new Error('modelingMachine not found')
+      }
+      const { engineCommandManager, kclManager, rustContext } =
+        modelingActor.getSnapshot().context
+      const hasConnectionRes = hasEngineConnection(engineCommandManager)
+      if (err(hasConnectionRes)) {
+        return hasConnectionRes
+      }
+      const modRes = addDimDistance({
+        ...(context.argumentsToSubmit as ModelingCommandSchema['Dim Distance']),
+        ast: kclManager.ast,
+        wasmInstance: await context.wasmInstancePromise,
+      })
+      if (err(modRes)) return modRes
+      const execRes = await mockExecAstAndReportErrors(
+        modRes.modifiedAst,
+        rustContext
+      )
+      if (err(execRes)) return execRes
+    },
+    args: {
+      name: {
+        inputType: 'string',
+        defaultValue: 'dimXLength',
+        required: true,
+      },
+      leftComponent: {
+        inputType: 'selectionMixed',
+        selectionTypes: ['path', 'sweep', 'compositeSolid'],
+        selectionFilter: ['object'],
+        multiple: false,
+        required: true,
+      },
+      rightComponent: {
+        inputType: 'selectionMixed',
+        selectionTypes: ['path', 'sweep', 'compositeSolid'],
+        selectionFilter: ['object'],
+        clearSelectionFirst: true,
+        multiple: false,
+        required: true,
       },
     },
   },

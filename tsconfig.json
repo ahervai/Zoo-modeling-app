@@ -33,7 +33,6 @@
     "noFallthroughCasesInSwitch": true,
     "module": "es2022",
     "moduleResolution": "node",
-    "ignoreDeprecations": "6.0",
     "resolveJsonModule": true,
     "composite": false,
     "isolatedModules": true,

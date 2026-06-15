@@ -41,6 +41,7 @@ const ignoredWatchPathNames = [
   'build',
   'test-results',
   'playwright-report',
+  'node_modules',
 ]
 
 export const ignoredWatchPathGlobs = ignoredWatchPathNames.map(

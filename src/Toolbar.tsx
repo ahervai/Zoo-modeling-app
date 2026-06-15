@@ -260,6 +260,7 @@ const Toolbar_ = memo(
               display: maybeIconConfig.display,
               visibleItemCount: maybeIconConfig.visibleItemCount,
               defaultVisibleItemIds: maybeIconConfig.defaultVisibleItemIds,
+              groupIcon: maybeIconConfig.groupIcon,
               array: maybeIconConfig.array.map((item) =>
                 resolveItemConfig(item, wasmInstance)
               ),
@@ -583,6 +584,11 @@ const Toolbar_ = memo(
                   id={selectedIcon.id + '-dropdown'}
                   name={maybeIconConfig.id}
                   platform={platform}
+                  dropdownTooltipText={
+                    maybeIconConfig.id === 'cadify-tools'
+                      ? 'Cadify Tools'
+                      : 'More tools'
+                  }
                   className={
                     (maybeIconConfig.array[0].alwaysDark
                       ? 'dark bg-chalkboard-90 '
@@ -629,7 +635,7 @@ const Toolbar_ = memo(
                       data-testid={selectedIcon.id}
                       data-onboarding-id={selectedIcon.id}
                       iconStart={{
-                        icon: selectedIcon.icon,
+                        icon: maybeIconConfig.groupIcon ?? selectedIcon.icon,
                         iconColor: selectedIcon.iconColor,
                         className: iconClassName,
                         bgClassName: bgClassName,
