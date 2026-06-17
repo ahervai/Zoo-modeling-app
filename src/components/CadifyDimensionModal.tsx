@@ -555,4 +555,3 @@ export const showCadifyDimensionModal = create<
   CadifyDimensionModalResolve,
   CadifyDimensionModalReject
 >(CadifyDimensionModalInner)
-import { type InstanceProps, create } from 'react-modal-promise'

@@ -761,6 +761,7 @@ export function addOffsetPlane({
   variables,
   plane,
   offset,
+  variableName,
   nodeToEdit,
   wasmInstance,
 }: {
@@ -769,6 +770,7 @@ export function addOffsetPlane({
   variables: VariableMap
   plane: Selections
   offset: KclCommandValue
+  variableName?: string
   nodeToEdit?: PathToNode
   wasmInstance: ModuleType
 }):
@@ -811,7 +813,7 @@ export function addOffsetPlane({
     call,
     pathToEdit: mNodeToEdit,
     pathIfNewPipe: undefined,
-    variableIfNewDecl: KCL_DEFAULT_CONSTANT_PREFIXES.PLANE,
+    variableIfNewDecl: variableName || KCL_DEFAULT_CONSTANT_PREFIXES.PLANE,
     wasmInstance,
   })
   if (err(pathToNode)) {
@@ -856,8 +858,9 @@ export function getPlaneExprFromSelection({
       wasmInstance,
       nodeToEdit,
       {
-        // Keep lookup aligned with deleteFace so selected parent solids map directly.
-        lastChildLookup: false,
+        // Resolve the most recent solid variable so face-based planes do not
+        // reference pre-boolean consumed solids (e.g. before subtract/union).
+        lastChildLookup: true,
         artifactTypeFilter: ['sweep', 'compositeSolid'],
       }
     )

@@ -363,6 +363,8 @@ export type ModelingCommandSchema = {
     nodeToEdit?: PathToNode
     plane: Selections
     offset: KclCommandValue
+    variableName?: string
+    skipValidation?: boolean
   }
   Helix: {
     // Enables editing workflow
@@ -1756,6 +1758,12 @@ export const modelingMachineCommandConfig: StateMachineCommandSetConfig<
     icon: 'plane',
     needsReview: true,
     reviewValidation: async (context, modelingActor) => {
+      const args =
+        context.argumentsToSubmit as ModelingCommandSchema['Offset plane']
+      if (args.skipValidation) {
+        return
+      }
+
       if (!modelingActor) {
         return new Error('modelingMachine not found')
       }
@@ -1766,7 +1774,7 @@ export const modelingMachineCommandConfig: StateMachineCommandSetConfig<
         return hasConnectionRes
       }
       const modRes = addOffsetPlane({
-        ...(context.argumentsToSubmit as ModelingCommandSchema['Offset plane']),
+        ...args,
         ast: kclManager.ast,
         artifactGraph: kclManager.artifactGraph,
         variables: kclManager.variables,
@@ -1802,6 +1810,39 @@ export const modelingMachineCommandConfig: StateMachineCommandSetConfig<
         inputType: 'kcl',
         defaultValue: KCL_DEFAULT_LENGTH,
         required: true,
+      },
+      variableName: {
+        inputType: 'string',
+        displayName: 'Mating Plate Name',
+        required: true,
+        defaultValue: (_, modelingContext) => {
+          if (!modelingContext) {
+            return KCL_DEFAULT_CONSTANT_PREFIXES.PLANE
+          }
+          return findUniqueName(
+            modelingContext.kclManager.ast,
+            KCL_DEFAULT_CONSTANT_PREFIXES.PLANE
+          )
+        },
+        hidden: (context) => Boolean(context.argumentsToSubmit.nodeToEdit),
+        validation: async ({ data, machineContext: modelingContext }) => {
+          if (!modelingContext) {
+            return 'Modeling context not found'
+          }
+          const variableExists =
+            modelingContext.kclManager.variables[data] ||
+            modelingContext.kclManager.variables['__mod_' + data]
+          if (variableExists) {
+            return 'This variable name is already in use.'
+          }
+
+          return true
+        },
+      },
+      skipValidation: {
+        inputType: 'boolean',
+        required: false,
+        hidden: true,
       },
     },
   },

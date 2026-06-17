@@ -1719,6 +1719,26 @@ export function buildToolbarConfig(
               links: [],
             },
             {
+              id: 'cadify-mating-plane',
+              onClick: () =>
+                commands.send({
+                  type: 'Find and select command',
+                  data: {
+                    name: 'Offset plane',
+                    groupId: 'modeling',
+                    argDefaultValues: {
+                      skipValidation: true,
+                    },
+                  },
+                }),
+              status: 'experimental',
+              title: 'Select Mating Planes for Dimensions',
+              icon: 'plane' as const,
+              description:
+                'Pick a mating surface directly in the 3D viewer, then name it and save. Creates a zero-offset plane from the selected face.',
+              links: [],
+            },
+            {
               id: 'cadify-export-features',
               onClick: ({ modelingState }) => {
                 const { kclManager } = modelingState.context
